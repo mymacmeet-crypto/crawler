@@ -45,8 +45,11 @@ CLI flags always win over `.env` values, which win over built-in defaults.
 ```
 site-archiver [options] <url>
 
--d, --depth <n>          maximum crawl depth (0 = start page only)   [3]
+-d, --depth <n>          maximum link depth from seed pages          [3]
+                         (0 = seeds only: start URL + sitemap URLs)
 -p, --max-pages <n>      maximum number of pages to process          [100]
+--sitemap <url>          seed from this sitemap URL instead of auto-discovery
+--no-sitemap             disable sitemap seeding (link discovery only)
 --all-domains            follow links to external domains (default: same domain only,
                          www.example.com and example.com count as the same domain)
 --include <regex>        only crawl URLs matching this pattern (repeatable)
@@ -96,7 +99,11 @@ archive/
     │   └── list_q_page-2.html      # https://example.com/blog/list?page=2
     ├── .crawl-state.json           # resume state (only while unfinished)
     └── .reports/
-        └── crawl-report-<timestamp>.json
+        ├── crawl-report-<timestamp>.json
+        ├── sitemap.xml             # generated: pages actually archived
+        └── sitemaps/               # copies of the site's original sitemaps
+            ├── 01-sitemap-index.xml
+            └── 02-sitemap-pages.xml
 ```
 
 Filenames are sanitized for Windows/macOS/Linux (illegal characters, reserved
@@ -107,6 +114,16 @@ leading dots are stripped during sanitization.
 
 ## Crawl behaviour
 
+- **Sitemap-first crawling** (default) — before link discovery starts, the
+  crawler locates the site's sitemap (an explicit `--sitemap <url>`, else
+  `Sitemap:` directives in robots.txt, else `<origin>/sitemap.xml`), follows
+  sitemap-index files, decompresses `.gz` sitemaps, and enqueues all in-scope
+  URLs sorted by their `<priority>` value (highest first, default 0.5) ahead
+  of any link-discovered URLs. Sitemap URLs enter at depth 0 - they are seeds
+  like the start URL. Copies of every fetched sitemap land in
+  `.reports/sitemaps/`, and a missing sitemap simply falls back to plain link
+  discovery. Disable with `--no-sitemap`. Traversal is capped at 50 sitemap
+  files / 50,000 URLs.
 - **Normalization & de-duplication** — every URL is normalized (fragment
   stripped, host lowercased, default ports removed, duplicate slashes
   collapsed, trailing slash trimmed, query keys sorted) before it is queued,
@@ -136,12 +153,16 @@ leading dots are stripped during sanitization.
 ## Crawl report
 
 Each run writes a JSON report (and prints a summary) containing: start URL,
-effective options, timestamps and duration, totals (URLs discovered, pages
-downloaded, skipped, failed), skip counts by reason, the full list of
-downloaded pages (URL → file, HTTP status, depth, title, archive time),
-skipped URLs with reasons (detail capped at 5000 entries; counts always
-complete), failed URLs with error and attempt count, and any crawl-level
-errors.
+effective options, timestamps and duration, sitemap info (sources found, URL
+count, seeded count), totals (URLs discovered, pages downloaded, skipped,
+failed), skip counts by reason, the full list of downloaded pages (URL →
+file, HTTP status, depth, title, archive time), skipped URLs with reasons
+(detail capped at 5000 entries; counts always complete), failed URLs with
+error and attempt count, and any crawl-level errors.
+
+Alongside the JSON report, `.reports/sitemap.xml` is generated listing every
+page archived in the crawl (an index of the archive), and
+`.reports/sitemaps/` holds verbatim copies of the site's own sitemap files.
 
 Exit codes: `0` success, `1` fatal setup error (bad arguments, invalid URL),
 `2` nothing archived and at least one failure, `130` interrupted.
@@ -156,6 +177,7 @@ src/crawler.js        orchestrator: worker pool, per-page pipeline, lifecycle
 src/queue.js          FIFO frontier + visited/known tracking (serializable)
 src/fetcher.js        discovery fetch: retries, backoff, redirects, Retry-After
 src/extractor.js      cheerio link/canonical/title extraction (base-href aware)
+src/sitemap.js        sitemap discovery, index recursion, .gz support, priority sort
 src/singlefile.js     SingleFile CLI resolution + hardened spawn wrapper
 src/robots.js         opt-in per-origin robots.txt cache (fails open)
 src/rateLimiter.js    global politeness limiter shared by all workers
@@ -169,8 +191,6 @@ src/logger.js         dependency-free leveled logger
 Every page-level concern is behind a small module with a narrow interface,
 which is where future features slot in:
 
-- **Sitemap parsing** — seed `CrawlQueue` from `sitemap.xml` entries next to
-  the start URL in `Crawler._initializeFrontier`.
 - **Authentication** — add headers/cookies in `fetcher.js` and pass
   `--browser-cookie`/`--http-header` through `singlefile.js`.
 - **JavaScript-rendered discovery** — swap `fetcher.js` for a browser-based

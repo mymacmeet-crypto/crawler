@@ -11,6 +11,7 @@ const { CrawlReport } = require('./report');
 const { CrawlState } = require('./state');
 const { fetchPage } = require('./fetcher');
 const { extractPageData } = require('./extractor');
+const { loadSitemapEntries, sortByPriority } = require('./sitemap');
 const { savePage } = require('./singlefile');
 const { normalizeUrl, checkScope, isSameDomain } = require('./utils/url');
 const { urlToFilePath, siteDir } = require('./utils/paths');
@@ -78,7 +79,7 @@ class Crawler {
     const { config, logger } = this;
     const startedAt = Date.now();
 
-    this._initializeFrontier();
+    await this._initializeFrontier();
 
     logger.info(
       `Crawling ${this.startUrl} -> ${this.siteDirectory} ` +
@@ -93,7 +94,7 @@ class Crawler {
     return this._finalize(startedAt);
   }
 
-  _initializeFrontier() {
+  async _initializeFrontier() {
     const previous = this.config.resume ? this.state.load(this.startUrl) : null;
     if (previous) {
       this.queue = CrawlQueue.fromJSON(previous.queue);
@@ -107,13 +108,83 @@ class Crawler {
       this.logger.info(
         `Resuming crawl saved at ${previous.savedAt}: ` +
           `${this.queue.pendingCount} pending, ${this.queue.visited.size} visited, ` +
-          `${this.report.pages.length} already downloaded`
+          `${this.report.pages.length} already downloaded ` +
+          '(sitemap URLs are already part of the saved queue)'
       );
-    } else {
-      if (this.config.resume) {
-        this.logger.info('No resumable state found - starting a fresh crawl');
+      return;
+    }
+
+    if (this.config.resume) {
+      this.logger.info('No resumable state found - starting a fresh crawl');
+    }
+    this.queue.add(this.startUrl, 0);
+    if (this.config.sitemapEnabled) await this._seedFromSitemap();
+  }
+
+  /**
+   * Seed the frontier from sitemap.xml: sitemap URLs are enqueued (highest
+   * <priority> first) ahead of any link-discovered URLs and enter at depth 0,
+   * i.e. they are treated as first-class seeds just like the start URL.
+   * Best-effort: a missing sitemap simply leaves plain link discovery.
+   */
+  async _seedFromSitemap() {
+    const { logger, report } = this;
+    let entries;
+    let sources;
+    try {
+      ({ entries, sources } = await loadSitemapEntries(this.startUrl, this.config, logger));
+    } catch (error) {
+      logger.warn(`Sitemap loading failed (${error.message}) - continuing without it`);
+      report.recordError(`sitemap loading failed: ${error.message}`);
+      return;
+    }
+
+    if (sources.length === 0) {
+      logger.info('No sitemap found - crawling via link discovery only');
+      report.sitemapInfo = { found: false, sources: [], urlCount: 0, seeded: 0 };
+      return;
+    }
+
+    this._saveSitemapCopies(sources);
+
+    let seeded = 0;
+    for (const entry of sortByPriority(entries)) {
+      const normalized = normalizeUrl(entry.loc, this.startUrl);
+      if (!normalized || this.queue.hasVisited(normalized)) continue;
+      const scope = checkScope(normalized, this.scope);
+      if (!scope.allowed) {
+        report.recordSkipped(normalized, `sitemap-out-of-scope:${scope.reason}`);
+        continue;
       }
-      this.queue.add(this.startUrl, 0);
+      if (this.queue.add(normalized, 0)) seeded++;
+    }
+
+    report.sitemapInfo = {
+      found: true,
+      sources: sources.map((s) => s.url),
+      urlCount: entries.length,
+      seeded,
+    };
+    logger.info(
+      `Sitemap: seeded ${seeded} URL(s) by priority from ${sources.length} sitemap file(s) ` +
+        `(${entries.length} listed)`
+    );
+  }
+
+  /** Archive the fetched sitemap documents under .reports/sitemaps/. */
+  _saveSitemapCopies(sources) {
+    const dir = path.join(this.siteDirectory, '.reports', 'sitemaps');
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      sources.forEach(({ url, xml }, index) => {
+        const base = path.basename(new URL(url).pathname) || 'sitemap.xml';
+        const name = `${String(index + 1).padStart(2, '0')}-${base.replace(/\.gz$/i, '')}`;
+        fs.writeFileSync(path.join(dir, name), xml);
+      });
+      this.logger.debug(`Saved ${sources.length} sitemap copy(ies) to ${dir}`);
+    } catch (error) {
+      this.report.recordError(`could not save sitemap copies: ${error.message}`);
+      this.logger.warn(`Could not save sitemap copies: ${error.message}`);
     }
   }
 
@@ -381,12 +452,18 @@ class Crawler {
 
     const builtReport = report.build(this.queue.discoveredCount);
     let reportFile = null;
+    let archiveSitemapFile = null;
     try {
       reportFile = report.write(builtReport, this.siteDirectory);
     } catch (error) {
       logger.error(`Could not write report file: ${error.message}`);
     }
-    process.stdout.write(report.summary(builtReport, reportFile));
+    try {
+      archiveSitemapFile = report.writeArchiveSitemap(builtReport, this.siteDirectory);
+    } catch (error) {
+      logger.error(`Could not write archive sitemap: ${error.message}`);
+    }
+    process.stdout.write(report.summary(builtReport, reportFile, archiveSitemapFile));
     logger.debug(`Total wall time: ${formatDuration(Date.now() - startedAt)}`);
 
     return builtReport;

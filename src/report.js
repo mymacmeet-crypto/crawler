@@ -23,6 +23,7 @@ class CrawlReport {
     this.failed = [];         // { url, error, attempts, stage }
     this.errors = [];         // crawl-level errors (state save failures, ...)
     this.interrupted = false;
+    this.sitemapInfo = null;  // { found, sources, urlCount, seeded } when sitemap seeding ran
     this._seenSkips = new Set();
   }
 
@@ -55,6 +56,7 @@ class CrawlReport {
     this.skippedOverflow = stats.skippedOverflow || 0;
     this.failed = stats.failed || [];
     this.errors = stats.errors || [];
+    this.sitemapInfo = stats.sitemapInfo || null;
     this._seenSkips = new Set(this.skipped.map((s) => s.url));
   }
 
@@ -67,6 +69,7 @@ class CrawlReport {
       skippedOverflow: this.skippedOverflow,
       failed: this.failed,
       errors: this.errors,
+      sitemapInfo: this.sitemapInfo,
     };
   }
 
@@ -94,7 +97,10 @@ class CrawlReport {
         respectRobots: this.config.respectRobots,
         overwrite: this.config.overwrite,
         dryRun: this.config.dryRun,
+        sitemapEnabled: this.config.sitemapEnabled,
+        sitemapUrl: this.config.sitemapUrl,
       },
+      sitemap: this.sitemapInfo || { found: false, sources: [], urlCount: 0, seeded: 0 },
       totals: {
         discovered: discoveredCount,
         downloaded: this.pages.length,
@@ -124,13 +130,60 @@ class CrawlReport {
     return file;
   }
 
+  /**
+   * Generate a sitemap.xml of the pages actually archived in this crawl and
+   * write it to the .reports folder. Doubles as an index of the archive.
+   * Returns the file path, or null when nothing was downloaded.
+   */
+  writeArchiveSitemap(report, siteDirectory) {
+    if (report.downloadedPages.length === 0) return null;
+
+    const escapeXml = (text) =>
+      String(text).replace(/[<>&'"]/g, (ch) => ({
+        '<': '&lt;',
+        '>': '&gt;',
+        '&': '&amp;',
+        "'": '&apos;',
+        '"': '&quot;',
+      })[ch]);
+
+    const lastmod = report.finishedAt.slice(0, 10);
+    const urls = report.downloadedPages
+      .map((page) =>
+        [
+          '  <url>',
+          `    <loc>${escapeXml(page.url)}</loc>`,
+          `    <lastmod>${lastmod}</lastmod>`,
+          '  </url>',
+        ].join('\n')
+      )
+      .join('\n');
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?>\n' +
+      '<!-- Pages archived by site-archiver; one entry per downloaded page. -->\n' +
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+      `${urls}\n` +
+      '</urlset>\n';
+
+    const file = path.join(siteDirectory, '.reports', 'sitemap.xml');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, xml);
+    return file;
+  }
+
   /** Render the console summary. */
-  summary(report, reportFile) {
+  summary(report, reportFile, archiveSitemapFile) {
     const t = report.totals;
+    const sitemapLine = report.sitemap.found
+      ? `${report.sitemap.seeded} URL(s) seeded from ${report.sitemap.sources.length} file(s)`
+      : report.options.sitemapEnabled
+        ? 'not found'
+        : 'disabled';
     const lines = [
       '',
       `Crawl ${report.interrupted ? 'INTERRUPTED' : 'finished'}: ${report.startUrl}`,
       `  Duration:          ${formatDuration(report.durationMs)}`,
+      `  Sitemap:           ${sitemapLine}`,
       `  URLs discovered:   ${t.discovered}`,
       `  Pages downloaded:  ${t.downloaded}`,
       `  Skipped:           ${t.skipped}${
@@ -155,6 +208,7 @@ class CrawlReport {
     if (report.interrupted) {
       lines.push('  Resume with:       --resume');
     }
+    if (archiveSitemapFile) lines.push(`  Archive sitemap:   ${archiveSitemapFile}`);
     if (reportFile) lines.push(`  Report:            ${reportFile}`);
     lines.push('');
     return lines.join('\n');

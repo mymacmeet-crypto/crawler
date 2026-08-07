@@ -51,6 +51,11 @@ function buildConfig(startUrl, cliOptions) {
     timeoutMs: positiveInt(cliOptions.timeout, '--timeout', { min: 1000 }),
     followRedirects: cliOptions.followRedirects !== false,
 
+    // --sitemap <url> yields a string, --no-sitemap yields false,
+    // and omitting both leaves undefined (= enabled, auto-discover).
+    sitemapEnabled: cliOptions.sitemap !== false,
+    sitemapUrl: typeof cliOptions.sitemap === 'string' ? cliOptions.sitemap : null,
+
     overwrite: Boolean(cliOptions.overwrite),
     resume: Boolean(cliOptions.resume),
     respectRobots: Boolean(cliOptions.respectRobots),

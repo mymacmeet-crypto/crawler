@@ -18,7 +18,11 @@ function createProgram() {
     )
     .version(pkg.version)
     .argument('<url>', 'start URL of the website to crawl')
-    .option('-d, --depth <n>', 'maximum crawl depth (0 = start page only)', '3')
+    .option(
+      '-d, --depth <n>',
+      'maximum link depth from seed pages (0 = seeds only: start URL + sitemap URLs)',
+      '3'
+    )
     .option('-p, --max-pages <n>', 'maximum number of pages to process', '100')
     .option('--all-domains', 'follow links to external domains (default: same domain only)')
     .option(
@@ -32,6 +36,14 @@ function createProgram() {
       'never crawl URLs matching this pattern (repeatable, wins over --include)',
       collect,
       []
+    )
+    .option(
+      '--sitemap <url>',
+      'seed the crawl from this sitemap URL instead of auto-discovering it'
+    )
+    .option(
+      '--no-sitemap',
+      'do not seed the crawl from sitemap.xml (link discovery only)'
     )
     .option('--delay <ms>', 'minimum delay between requests to the site', '500')
     .option('-c, --concurrency <n>', 'number of pages processed in parallel', '2')
