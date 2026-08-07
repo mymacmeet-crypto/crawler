@@ -1,0 +1,33 @@
+{
+  "name": "site-archiver",
+  "version": "1.0.0",
+  "description": "Production-ready CLI website crawler that archives pages as standalone HTML files via SingleFile CLI",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "src/crawler.js",
+  "bin": {
+    "site-archiver": "bin/crawl.js"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "scripts": {
+    "start": "node bin/crawl.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "keywords": [
+    "crawler",
+    "archiver",
+    "singlefile",
+    "scraper",
+    "cli",
+    "website-mirror"
+  ],
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "robots-parser": "^3.0.1",
+    "single-file-cli": "^2.0.73"
+  }
+}
