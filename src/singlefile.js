@@ -19,9 +19,14 @@ const path = require('node:path');
  * Returns { command, prefixArgs } suitable for child_process.spawn.
  */
 function resolveSingleFile(explicitPath) {
+  // Injected into every Node-hosted SingleFile process so that simple-cdp's
+  // CloseEvent usage works on Node v22 (CloseEvent landed in Node v23).
+  const polyfill = path.join(__dirname, 'closeevent-polyfill.js');
+  const requirePolyfill = ['--require', polyfill];
+
   if (explicitPath) {
     if (/\.(c|m)?js$/i.test(explicitPath)) {
-      return { command: process.execPath, prefixArgs: [explicitPath] };
+      return { command: process.execPath, prefixArgs: [...requirePolyfill, explicitPath] };
     }
     return { command: explicitPath, prefixArgs: [] };
   }
@@ -33,7 +38,7 @@ function resolveSingleFile(explicitPath) {
       typeof pkg.bin === 'string' ? pkg.bin : pkg.bin && pkg.bin['single-file'];
     if (binRelative) {
       const script = path.join(path.dirname(pkgPath), binRelative);
-      return { command: process.execPath, prefixArgs: [script] };
+      return { command: process.execPath, prefixArgs: [...requirePolyfill, script] };
     }
   } catch {
     /* fall through to PATH lookup */
