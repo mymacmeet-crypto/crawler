@@ -11,10 +11,23 @@ const path = require('node:path');
  */
 
 /**
+ * Sibling checkout of https://github.com/gildas-lormeau/single-file-cli, kept
+ * next to this repo so no npm dependency on single-file-cli is needed.
+ */
+const SIBLING_CLONE = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  'single-file-cli',
+  'single-file-node.js'
+);
+
+/**
  * Locate the SingleFile entry script/binary, in priority order:
  *  1. explicit path (SINGLEFILE_PATH in .env)
- *  2. the locally installed single-file-cli package
- *  3. `single-file` on PATH (last resort)
+ *  2. the sibling single-file-cli checkout (../single-file-cli)
+ *  3. a locally installed single-file-cli npm package, if one is present
+ *  4. `single-file` on PATH (last resort)
  *
  * Returns { command, prefixArgs } suitable for child_process.spawn.
  */
@@ -29,6 +42,10 @@ function resolveSingleFile(explicitPath) {
       return { command: process.execPath, prefixArgs: [...requirePolyfill, explicitPath] };
     }
     return { command: explicitPath, prefixArgs: [] };
+  }
+
+  if (fs.existsSync(SIBLING_CLONE)) {
+    return { command: process.execPath, prefixArgs: [...requirePolyfill, SIBLING_CLONE] };
   }
 
   try {
@@ -99,7 +116,8 @@ async function savePage(url, outputPath, config) {
     child.on('error', (error) => {
       const hint =
         error.code === 'ENOENT'
-          ? ' (SingleFile CLI not found — run `npm install` or set SINGLEFILE_PATH in .env)'
+          ? ' (SingleFile CLI not found — clone it next to this repo as ../single-file-cli' +
+            ' or set SINGLEFILE_PATH in .env)'
           : '';
       finish({ ok: false, error: `failed to launch SingleFile: ${error.message}${hint}` });
     });
